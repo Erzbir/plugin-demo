@@ -8,6 +8,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * @author Erzbir
+ * @since 1.0.0
+ */
 public class FileTypeDetector {
     private static final Map<Magic, FileType> FILE_TYPE_MAP = new HashMap<>(5);
 

@@ -21,7 +21,7 @@ public class TestPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        System.out.printf("Plugin %s disable\n", description.id());
+        System.out.printf("Plugin %s disabled\n", description.id());
     }
 
     @Override

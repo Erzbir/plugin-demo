@@ -2,7 +2,10 @@
 out/
 !**/src/main/**/out/
 !**/src/test/**/out/
-.idea
+.idea/workspace.xml
+.idea/vcs.xml
+.idea/swift-toolchain.xml
+.idea/checkstyle-idea.xml
 
 ### Eclipse ###
 .apt_generated

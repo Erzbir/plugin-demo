@@ -1,7 +1,5 @@
 package com.demo.plugin.internal.loader;
 
-import com.demo.plugin.Plugin;
-
 import java.nio.file.Path;
 
 /**
@@ -9,7 +7,5 @@ import java.nio.file.Path;
  * @since 1.0.0
  */
 public interface PluginLoader {
-    Plugin loadPlugin(Path pluginPath);
-
-    ClassLoader getClassLoader();
+    PluginLoadResult loadPlugin(Path pluginPath);
 }

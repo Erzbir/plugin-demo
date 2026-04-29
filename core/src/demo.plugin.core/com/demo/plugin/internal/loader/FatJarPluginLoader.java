@@ -10,7 +10,9 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.nio.file.Path;
+import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 /**
@@ -18,68 +20,94 @@ import java.util.jar.JarFile;
  * @since 1.0.0
  */
 public class FatJarPluginLoader implements PluginLoader {
-    protected final PluginClassLoader classLoader;
-    protected final static String SERVICE_PATH = "META-INF/services/com.demo.plugin.Plugin";
-
-    public FatJarPluginLoader() {
-        this.classLoader = new PluginClassLoader();
-    }
+    protected static final String SERVICE_PATH = "META-INF/services/com.demo.plugin.Plugin";
 
     @Override
-    public Plugin loadPlugin(Path pluginPath) {
-        // 判断是否是一个 jar 文件, 通过文件头和后缀判断
+    public PluginLoadResult loadPlugin(Path pluginPath) {
         if (!FileTypeDetector.isJarFile(pluginPath)) {
-            throw new PluginIllegalException("The file " + pluginPath.toAbsolutePath() + " is not a jar file");
+            throw new PluginIllegalException(
+                    "The file " + pluginPath.toAbsolutePath() + " is not a jar file");
         }
+
         File file = pluginPath.toFile();
-        // 加载这个插件的所有字节码文件
-        loadPluginClass(file);
-        // 读取插件的主类名
-        String pluginClassName = readPluginMainClassName(file);
-        // 获取插件的主类, 在这个方法里真正开始加载类
-        Class<?> pluginClass = getPluginClass(pluginClassName);
-        // 返回插件实例
-        return resolvePluginClass(pluginClass);
-    }
 
-    @Override
-    public ClassLoader getClassLoader() {
-        return classLoader;
-    }
-
-    private void loadPluginClass(File file) {
+        // 每个插件独享一个 ClassLoader, 保证隔离和可卸载
+        PluginClassLoader classLoader = new PluginClassLoader();
+        // 加载这个插件的所有字节码文件, 会在 getPluginClass 的时候加载
         classLoader.addFile(file);
+
+        String pluginClassName = readPluginMainClassName(file);
+        Class<?> pluginClass = getPluginClass(pluginClassName, classLoader);
+        Plugin plugin = resolvePluginClass(pluginClass);
+        return new PluginLoadResult(plugin, classLoader);
     }
 
-    private Class<?> getPluginClass(String className) {
+    private Class<?> getPluginClass(String className, PluginClassLoader classLoader) {
         try {
-            return Class.forName(className, false, classLoader);
+            // initialize=true: 确保静态初始化块执行, INSTANCE 等字段正常赋值
+            return Class.forName(className, true, classLoader);
         } catch (ClassNotFoundException e) {
-            throw new PluginIllegalException(e);
+            throw new PluginIllegalException("Plugin class not found: " + className, e);
         }
     }
 
     private Plugin resolvePluginClass(Class<?> pluginClass) {
-        if (Plugin.class.isAssignableFrom(pluginClass)) {
-            try {
-                // 由于使用了模块化, 并且动态加载的 jar 是一个 unnamed module 所以不能使用 MethodHandle
-                Field instance = pluginClass.getDeclaredField("INSTANCE");
-                instance.setAccessible(true);
-                return (Plugin) instance.get(null);
-            } catch (Throwable e) {
-                throw new PluginIllegalException(String.format("Failed to find INSTANCE in plugin: %s", pluginClass.getName()), e);
-            }
+        if (!Plugin.class.isAssignableFrom(pluginClass)) {
+            throw new PluginIllegalException(
+                    pluginClass.getName() + " does not implement Plugin");
         }
-        throw new PluginIllegalException("Should never get here");
+        try {
+            return revolvePlugin(pluginClass);
+        } catch (NoSuchFieldException e) {
+            throw new PluginIllegalException(
+                    "Plugin " + pluginClass.getName() + " must declare a static INSTANCE field", e);
+        } catch (IllegalAccessException e) {
+            throw new PluginIllegalException(
+                    "Cannot access INSTANCE field in " + pluginClass.getName(), e);
+        }
+    }
+
+    private Plugin revolvePlugin(Class<?> pluginClass) throws NoSuchFieldException, IllegalAccessException {
+        Field instance = pluginClass.getDeclaredField("INSTANCE");
+
+        if (!Modifier.isStatic(instance.getModifiers())) {
+            throw new PluginIllegalException(
+                    "INSTANCE field in " + pluginClass.getName() + " must be static");
+        }
+
+        instance.setAccessible(true);
+
+        Object value = instance.get(null);
+        if (value == null) {
+            throw new PluginIllegalException(
+                    "INSTANCE field in " + pluginClass.getName() + " is null");
+        }
+        if (value instanceof Plugin plugin) {
+            return plugin;
+        }
+        throw new PluginIllegalException(
+                "INSTANCE field in " + pluginClass.getName()
+                        + " is not assignable to Plugin, actual type: " + value.getClass().getName());
     }
 
     private String readPluginMainClassName(File file) {
-        String line;
-        try (JarFile jarFile = new JarFile(file); BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(jarFile.getInputStream(jarFile.getEntry(SERVICE_PATH))))) {
-            line = bufferedReader.readLine();
+        try (JarFile jarFile = new JarFile(file)) {
+            JarEntry entry = jarFile.getJarEntry(SERVICE_PATH);
+            if (entry == null) {
+                throw new PluginIllegalException(
+                        "Missing service file in plugin jar: " + SERVICE_PATH);
+            }
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(jarFile.getInputStream(entry)))) {
+                String line = reader.readLine();
+                if (line == null || line.isBlank()) {
+                    throw new PluginIllegalException(
+                            "Service file is empty: " + SERVICE_PATH);
+                }
+                return line.trim();
+            }
         } catch (IOException e) {
-            throw new PluginIllegalException("Failed to read service file", e);
+            throw new PluginIllegalException("Failed to read service file: " + SERVICE_PATH, e);
         }
-        return line;
     }
 }

@@ -11,7 +11,7 @@ import java.net.URLClassLoader;
  * @author Erzbir
  * @since 1.0.0
  */
-public class PluginClassLoader extends URLClassLoader {
+class PluginClassLoader extends URLClassLoader {
     private static final String JAVA_PACKAGE_PREFIX = "java.";
     private static final String JAVAX_PACKAGE_PREFIX = "javax.";
     private static final String PLUGIN_PACKAGE_PREFIX = "com.demo.plugin.";
@@ -34,38 +34,34 @@ public class PluginClassLoader extends URLClassLoader {
     }
 
     @Override
-    public Class<?> loadClass(String className) throws ClassNotFoundException {
-        synchronized (getClassLoadingLock(className)) {
-            // 如果是 Java 自带的系统类就交给 SystemClassLoader 来加载
-            if (className.startsWith(JAVA_PACKAGE_PREFIX) || className.startsWith(JAVAX_PACKAGE_PREFIX)) {
-                return findSystemClass(className);
+    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+        synchronized (getClassLoadingLock(name)) {
+            // 先查找是否被此类加载器加载过
+            Class<?> loaded = findLoadedClass(name);
+            if (loaded != null) {
+                if (resolve) {
+                    resolveClass(loaded);
+                }
+                return loaded;
             }
 
-            // 如果是插件框架的依赖, 交给父类加载器
-            if (className.startsWith(PLUGIN_PACKAGE_PREFIX)) {
+            // 如果 Java 自带的系统类或是插件框架的依赖, 交给父类加载器
+            if (name.startsWith(JAVA_PACKAGE_PREFIX)
+                    || name.startsWith(JAVAX_PACKAGE_PREFIX)
+                    || name.startsWith(PLUGIN_PACKAGE_PREFIX)) {
                 ClassLoader parent = getParent();
-                if (parent != null) {
-                    return parent.loadClass(className);
+                if (parent == null) {
+                    throw new ClassNotFoundException(name);
                 }
+                return parent.loadClass(name);
             }
 
-            // 先查找有没有这个类, 加载过的类就直接返回
-            Class<?> loadedClass = findLoadedClass(className);
-            if (loadedClass != null) {
-                return loadedClass;
+            // 插件自身类 -> 本 ClassLoader
+            Class<?> c = findClass(name);
+            if (resolve) {
+                resolveClass(c);
             }
-
-            try {
-                Class<?> c = findClass(className);
-
-                if (c != null) {
-                    return c;
-                }
-            } catch (ClassNotFoundException ignored) {
-
-            }
+            return c;
         }
-
-        throw new ClassNotFoundException(className);
     }
 }
